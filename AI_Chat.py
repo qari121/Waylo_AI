@@ -34,10 +34,16 @@ import random
 # Import whisper recognition (only for offline mode)
 from whisper_recognition import WhisperRecognition
 
+# Add at the top of AI_Chat.py after imports
+os.environ['LD_LIBRARY_PATH'] = '/home/orangepi/rknn-llm/rkllm-runtime/Linux/librkllm_api/aarch64:' + os.environ.get('LD_LIBRARY_PATH', '')
+
 # Load environment variables from .env file
 load_dotenv()
 
 print("Running updated AI_Chat.py")
+
+# Force offline mode for testing RKLLM
+HAS_INTERNET = False
 
 # Setup logging
 logging.basicConfig(
@@ -271,7 +277,8 @@ class WailoInteractionTracker:
             
             while retry_count < max_retries and self.offline_model is None:
                 try:
-                    self.offline_model = OfflineModelHandler()
+                    # Update this line with your specific model path
+                    self.offline_model = OfflineModelHandler("./meta-llama_Llama-3.2-3B-rk3588.rkllm")
                     if self.offline_model.model is None:
                         print(f"Offline model initialization failed, attempt {retry_count + 1}/{max_retries}")
                         self.offline_model = None
@@ -489,11 +496,14 @@ def ai_chat():
                         continue
                 
                 # Generate response using offline model
-                print("Thinking...")
-                response = wailo_model.generate_response(user_input)
-                
-                # Text to speech using offline TTS
-                speak_text_offline(response)
+                try:
+                    print("Thinking...")
+                    response = wailo_model.generate_response(user_input)
+                    speak_text_offline(response)
+                except Exception as e:
+                    logger.error(f"Error using RKLLM: {e}")
+                    print(f"RKLLM error: {e}")
+                    speak_text_offline("I'm having trouble thinking right now. Let's try again.")
                 
             except KeyboardInterrupt:
                 print("\nExiting upon user request.")

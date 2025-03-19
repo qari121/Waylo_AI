@@ -4,6 +4,7 @@ import logging
 import datetime
 import re
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from rkllm_wrapper import RkllmWrapper
 
 # Set up logging
 log_dir = "logs"
@@ -26,60 +27,31 @@ class WailoOfflineModel:
     Uses TinyLlama with the proper chat format.
     """
     
-    def __init__(self, model_path: str = "./tinyllama-chat"):
+    def __init__(self, model_path="./meta-llama_Llama-3.2-3B-rk3588.rkllm"):
         """
         Initialize the Wailo offline model with proper format.
         """
         self.model_path = model_path
-        self.device = torch.device("cpu")
-        self.model = None
-        self.tokenizer = None
+        self.rkllm = None
         self.first_message = True
         
         # Load model
-        logger.info(f"Initializing Wailo with TinyLlama from: {model_path}")
+        logger.info(f"Initializing Wailo with RKLLM from: {model_path}")
         self._load_model()
     
     def _load_model(self) -> None:
         """Load the model and tokenizer from the specified path."""
         try:
-            logger.info(f"Loading model from {self.model_path}...")
-            
-            # Check if model file exists
-            model_file = os.path.join(self.model_path, "model.safetensors")
-            if not os.path.exists(model_file):
-                logger.error(f"Model file not found at {model_file}")
-                return
-            
-            # Load tokenizer with low memory usage
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_path,
-                local_files_only=True
-            )
-            
-            # Ensure pad token is set
-            if self.tokenizer.pad_token is None:
-                self.tokenizer.pad_token = self.tokenizer.eos_token
-                
-            # Load model with low memory usage and fp16 for better performance
-            self.model = AutoModelForCausalLM.from_pretrained(
-                self.model_path,
-                local_files_only=True,
-                torch_dtype=torch.float32,
-                low_cpu_mem_usage=True
-            )
-            
-            # Put model in evaluation mode
-            self.model.eval()
-            logger.info(f"TinyLlama model loaded successfully!")
+            logger.info(f"Loading RKLLM model from {self.model_path}...")
+            self.rkllm = RkllmWrapper(self.model_path)
+            logger.info("RKLLM model loaded successfully!")
             
         except Exception as e:
-            logger.error(f"Error loading model: {str(e)}")
-            self.model = None
-            self.tokenizer = None
+            logger.error(f"Error loading RKLLM model: {str(e)}")
+            self.rkllm = None
     
     def generate_response(self, question: str) -> str:
-        """Generate a response using the TinyLlama model with proper format"""
+        """Generate a response using the RKLLM model with proper format"""
         # Log the input
         logger.info(f"INPUT: {question}")
         
@@ -99,56 +71,21 @@ class WailoOfflineModel:
             if not question:
                 return "I'm listening! What would you like to talk about?"
             
-            # Format messages for TinyLlama using the correct chat format
-            system_message = "You are Wailo, a friendly AI pet for children. Keep your responses SHORT (1-2 sentences), simple and complete."
+            # Format for RKLLM
+            system_message = "You are Wailo, a friendly AI pet for children. Keep your responses SHORT, simple and complete."
+            prompt = f"<s>[INST] {system_message}\n\n{question} [/INST]"
             
-            # Format according to TinyLlama's expected format
-            prompt = f"<|system|>\n{system_message}\n<|user|>\n{question}\n<|assistant|>\n"
-            
-            logger.info(f"Using prompt format: {prompt}")
-            
-            # Determine if this is likely a question that needs a list response
-            needs_list = any(phrase in question.lower() for phrase in 
-                             ["how to", "steps", "guide", "instructions", "help me", "ways to", "can you help"])
-            
-            # Use more tokens for list-type responses
-            max_tokens = 150 if needs_list else 80
-            
-            # Tokenize
-            inputs = self.tokenizer(
-                prompt, 
-                return_tensors="pt",
-                padding=True
-            ).to(self.device)
-            
+            # Generate response
             logger.info("Starting generation...")
             generation_start = datetime.datetime.now()
             
-            # Generate with more tokens for list responses
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    inputs.input_ids,
-                    max_new_tokens=max_tokens,  # Use more tokens for list responses
-                    do_sample=True,  # Enable sampling for more varied responses
-                    temperature=0.7,
-                    top_p=0.9,
-                    no_repeat_ngram_size=3,  # Prevent repetition
-                    pad_token_id=self.tokenizer.pad_token_id,
-                    eos_token_id=self.tokenizer.eos_token_id,
-                    attention_mask=inputs.attention_mask  # Add attention mask
-                )
+            response = self.rkllm.generate_response(prompt)
             
             generation_time = (datetime.datetime.now() - generation_start).total_seconds()
             logger.info(f"Generation completed in {generation_time:.2f} seconds")
             
-            # Extract the generated text
-            response = self.tokenizer.decode(
-                outputs[0][inputs.input_ids.shape[1]:], 
-                skip_special_tokens=True
-            )
-            
-            # Clean up the response - extra cleanup for list responses
-            response = self._clean_response(response, is_list=needs_list)
+            # Clean up the response
+            response = self._clean_response(response)
             
             logger.info(f"MODEL RESPONSE: {response}")
             logger.info(f"Generation time: {generation_time:.2f} seconds")
@@ -206,7 +143,7 @@ class WailoOfflineModel:
     
     def is_ready(self) -> bool:
         """Check if the model is loaded and ready to use."""
-        return self.model is not None and self.tokenizer is not None
+        return self.rkllm is not None
 
 
 # For testing
